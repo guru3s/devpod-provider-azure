@@ -287,7 +287,7 @@ public_ip="$(discover_public_ipv4)" || die "could not discover and validate the 
 source_cidr="${public_ip}/32"
 
 printf 'Restricting %s SSH to %s\n' "$provider" "$source_cidr"
-devpod provider set-options "$provider" --option "AZURE_SSH_SOURCE_CIDR=${source_cidr}"
+devpod provider set-options "$provider" --single-machine --option "AZURE_SSH_SOURCE_CIDR=${source_cidr}"
 
 provider_list_json="$(devpod provider list --output json)" || \
   die "failed to verify the updated provider option"
@@ -297,6 +297,9 @@ saved_source_cidr="$(printf '%s\n' "$provider_list_json" | jq -er \
   die "provider did not persist AZURE_SSH_SOURCE_CIDR"
 [[ "$saved_source_cidr" == "$source_cidr" ]] || \
   die "provider saved an unexpected SSH source CIDR; refusing Azure changes"
+printf '%s\n' "$provider_list_json" | jq -e --arg provider "$provider" \
+  '.[$provider].state.singleMachine == true' >/dev/null || \
+  die "provider lost single-machine mode while updating the CIDR"
 
 nsg_list_json="$(az network nsg list --subscription "$subscription_id" --resource-group "$resource_group" --output json)" || \
   die "failed to list network security groups in $resource_group"
