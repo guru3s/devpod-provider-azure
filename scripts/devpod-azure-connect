@@ -8,7 +8,7 @@ Usage: devpod-azure-connect <india|sf> <workspace> [--ide cursor|vscode|none] [-
 
 Examples:
   devpod-azure-connect india vision-india --ide cursor --source .
-  devpod-azure-connect sf vision-sf --ide vscode --source git:https://github.com/example/project
+  devpod-azure-connect sf vision-sf --ide vscode --source https://github.com/example/project
   devpod-azure-connect india vision-india --ide none
 
 The --source option is required only when creating a workspace for the first time.
