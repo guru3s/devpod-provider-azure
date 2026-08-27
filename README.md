@@ -17,6 +17,7 @@ Needed variables will be:
 
 - AZURE_RESOURCE_GROUP
 - AZURE_REGION
+- AZURE_SSH_SOURCE_CIDR
 
 ### Creating your first devpod env with azure
 
@@ -46,9 +47,14 @@ This provides has the seguent options
 | AZURE_REGION              | true     | The azure region to use        |                                         |
 | AZURE_RESOURCE_GROUP      | true     | The azure resource group name  |                                         |
 | AZURE_SUBSCRIPTION_ID     | true     | The azure subscription id      |                                         |
+| AZURE_SSH_SOURCE_CIDR     | true     | IPv4 CIDR allowed to connect to SSH; use the current public IPv4 with `/32` | |
 
 Options can either be set in `env` or using for example:
 
 ```sh
 devpod provider set-options -o AZURE_IMAGE=Vendor:Item:Version:Tag
 ```
+
+`AZURE_SSH_SOURCE_CIDR` must be a canonical IPv4 CIDR. IPv6 CIDRs, CIDRs with
+host bits set, and `0.0.0.0/0` are rejected so the provider never creates an
+SSH rule open to the whole internet.

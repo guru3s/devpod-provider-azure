@@ -2,6 +2,7 @@ package options
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ var (
 	AZURE_DISK_SIZE       = "AZURE_DISK_SIZE"
 	AZURE_CUSTOM_DATA     = "AZURE_CUSTOM_DATA"
 	AZURE_SUBSCRIPTION_ID = "AZURE_SUBSCRIPTION_ID"
+	AZURE_SSH_SOURCE_CIDR = "AZURE_SSH_SOURCE_CIDR"
 	AZURE_TAGS            = "AZURE_TAGS"
 )
 
@@ -31,6 +33,7 @@ type Options struct {
 	MachineID      string
 	MachineType    string
 	ResourceGroup  string
+	SSHSourceCIDR  string
 	SubscriptionID string
 	Zone           string
 	Tags           map[string]*string
@@ -100,6 +103,16 @@ func FromEnv(init bool) (*Options, error) {
 		return nil, err
 	}
 
+	sshSourceCIDR, err := FromEnvOrError(AZURE_SSH_SOURCE_CIDR)
+	if err != nil {
+		return nil, err
+	}
+
+	retOptions.SSHSourceCIDR, err = parseSSHSourceCIDR(sshSourceCIDR)
+	if err != nil {
+		return nil, err
+	}
+
 	retOptions.Tags, err = parseTags(os.Getenv(AZURE_TAGS))
 	if err != nil {
 		return nil, err
@@ -123,6 +136,27 @@ func FromEnv(init bool) (*Options, error) {
 	}
 
 	return retOptions, nil
+}
+
+func parseSSHSourceCIDR(value string) (string, error) {
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil {
+		return "", fmt.Errorf("invalid %s %q: expected an IPv4 CIDR: %w", AZURE_SSH_SOURCE_CIDR, value, err)
+	}
+
+	if !prefix.Addr().Is4() {
+		return "", fmt.Errorf("invalid %s %q: IPv6 CIDRs are not supported", AZURE_SSH_SOURCE_CIDR, value)
+	}
+
+	if prefix.Bits() == 0 {
+		return "", fmt.Errorf("invalid %s %q: worldwide SSH access is not allowed", AZURE_SSH_SOURCE_CIDR, value)
+	}
+
+	if prefix != prefix.Masked() {
+		return "", fmt.Errorf("invalid %s %q: host bits must be zero (use %s)", AZURE_SSH_SOURCE_CIDR, value, prefix.Masked())
+	}
+
+	return prefix.String(), nil
 }
 
 func FromEnvOrError(name string) (string, error) {

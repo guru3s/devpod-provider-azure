@@ -95,49 +95,11 @@ func createNetworkSecurityGroup(
 		return nil, err
 	}
 
-	parameters := armnetwork.SecurityGroup{
-		Location: to.Ptr(azureProvider.Config.Zone),
-		Tags:     azureProvider.Config.Tags,
-		Properties: &armnetwork.SecurityGroupPropertiesFormat{
-			SecurityRules: []*armnetwork.SecurityRule{
-				// Windows connection to virtual machine needs to open port 3389,RDP
-				// inbound
-				{
-					Name: to.Ptr("devpod_inbound_22"), //
-					Properties: &armnetwork.SecurityRulePropertiesFormat{
-						SourceAddressPrefix:      to.Ptr("0.0.0.0/0"),
-						SourcePortRange:          to.Ptr("*"),
-						DestinationAddressPrefix: to.Ptr("0.0.0.0/0"),
-						DestinationPortRange:     to.Ptr("22"),
-						Protocol:                 to.Ptr(armnetwork.SecurityRuleProtocolTCP),
-						Access:                   to.Ptr(armnetwork.SecurityRuleAccessAllow),
-						Priority:                 to.Ptr[int32](100),
-						Description: to.Ptr(
-							"devpod network security group inbound port 22",
-						),
-						Direction: to.Ptr(armnetwork.SecurityRuleDirectionInbound),
-					},
-				},
-				// outbound
-				{
-					Name: to.Ptr("devpod_outbound_22"), //
-					Properties: &armnetwork.SecurityRulePropertiesFormat{
-						SourceAddressPrefix:      to.Ptr("0.0.0.0/0"),
-						SourcePortRange:          to.Ptr("*"),
-						DestinationAddressPrefix: to.Ptr("0.0.0.0/0"),
-						DestinationPortRange:     to.Ptr("22"),
-						Protocol:                 to.Ptr(armnetwork.SecurityRuleProtocolTCP),
-						Access:                   to.Ptr(armnetwork.SecurityRuleAccessAllow),
-						Priority:                 to.Ptr[int32](100),
-						Description: to.Ptr(
-							"devpod network security group outbound port 22",
-						),
-						Direction: to.Ptr(armnetwork.SecurityRuleDirectionOutbound),
-					},
-				},
-			},
-		},
-	}
+	parameters := newNetworkSecurityGroupParameters(
+		azureProvider.Config.Zone,
+		azureProvider.Config.Tags,
+		azureProvider.Config.SSHSourceCIDR,
+	)
 
 	pollerResponse, err := nsgClient.BeginCreateOrUpdate(
 		ctx,
@@ -157,6 +119,53 @@ func createNetworkSecurityGroup(
 	return &resp.SecurityGroup, nil
 }
 
+func newNetworkSecurityGroupParameters(
+	zone string,
+	tags map[string]*string,
+	sshSourceCIDR string,
+) armnetwork.SecurityGroup {
+	return armnetwork.SecurityGroup{
+		Location: to.Ptr(zone),
+		Tags:     tags,
+		Properties: &armnetwork.SecurityGroupPropertiesFormat{
+			SecurityRules: []*armnetwork.SecurityRule{
+				{
+					Name: to.Ptr("devpod_inbound_22"),
+					Properties: &armnetwork.SecurityRulePropertiesFormat{
+						SourceAddressPrefix:      to.Ptr(sshSourceCIDR),
+						SourcePortRange:          to.Ptr("*"),
+						DestinationAddressPrefix: to.Ptr("0.0.0.0/0"),
+						DestinationPortRange:     to.Ptr("22"),
+						Protocol:                 to.Ptr(armnetwork.SecurityRuleProtocolTCP),
+						Access:                   to.Ptr(armnetwork.SecurityRuleAccessAllow),
+						Priority:                 to.Ptr[int32](100),
+						Description: to.Ptr(
+							"devpod network security group inbound port 22",
+						),
+						Direction: to.Ptr(armnetwork.SecurityRuleDirectionInbound),
+					},
+				},
+				{
+					Name: to.Ptr("devpod_outbound_22"),
+					Properties: &armnetwork.SecurityRulePropertiesFormat{
+						SourceAddressPrefix:      to.Ptr("0.0.0.0/0"),
+						SourcePortRange:          to.Ptr("*"),
+						DestinationAddressPrefix: to.Ptr("0.0.0.0/0"),
+						DestinationPortRange:     to.Ptr("22"),
+						Protocol:                 to.Ptr(armnetwork.SecurityRuleProtocolTCP),
+						Access:                   to.Ptr(armnetwork.SecurityRuleAccessAllow),
+						Priority:                 to.Ptr[int32](100),
+						Description: to.Ptr(
+							"devpod network security group outbound port 22",
+						),
+						Direction: to.Ptr(armnetwork.SecurityRuleDirectionOutbound),
+					},
+				},
+			},
+		},
+	}
+}
+
 func createPublicIP(
 	ctx context.Context,
 	azureProvider *AzureProvider,
@@ -166,15 +175,7 @@ func createPublicIP(
 		return nil, err
 	}
 
-	parameters := armnetwork.PublicIPAddress{
-		Location: to.Ptr(azureProvider.Config.Zone),
-		Tags:     azureProvider.Config.Tags,
-		Properties: &armnetwork.PublicIPAddressPropertiesFormat{
-			PublicIPAllocationMethod: to.Ptr(
-				armnetwork.IPAllocationMethodStatic,
-			), // Static or Dynamic
-		},
-	}
+	parameters := newPublicIPAddressParameters(azureProvider.Config.Zone, azureProvider.Config.Tags)
 
 	pollerResponse, err := publicIPAddressClient.BeginCreateOrUpdate(
 		ctx,
@@ -192,6 +193,20 @@ func createPublicIP(
 		return nil, err
 	}
 	return &resp.PublicIPAddress, err
+}
+
+func newPublicIPAddressParameters(zone string, tags map[string]*string) armnetwork.PublicIPAddress {
+	return armnetwork.PublicIPAddress{
+		Location: to.Ptr(zone),
+		Tags:     tags,
+		SKU: &armnetwork.PublicIPAddressSKU{
+			Name: to.Ptr(armnetwork.PublicIPAddressSKUNameStandard),
+			Tier: to.Ptr(armnetwork.PublicIPAddressSKUTierRegional),
+		},
+		Properties: &armnetwork.PublicIPAddressPropertiesFormat{
+			PublicIPAllocationMethod: to.Ptr(armnetwork.IPAllocationMethodStatic),
+		},
+	}
 }
 
 func createNetWorkInterface(
