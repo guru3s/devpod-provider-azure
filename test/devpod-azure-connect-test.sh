@@ -129,6 +129,25 @@ if PATH="$fixture_bin:$PATH" \
 fi
 assert_contains "$case_dir/stderr" 'NSG verification failed'
 
+case_dir="$test_root/additional-ssh-rule"
+mkdir -p "$case_dir"
+: >"$case_dir/log"
+printf '%s\n' \
+  '# DevPod Start vision-india.devpod' \
+  'Host vision-india.devpod' \
+  '  ForwardAgent yes' \
+  '# DevPod End vision-india.devpod' >"$case_dir/ssh-config"
+if PATH="$fixture_bin:$PATH" \
+  MOCK_LOG="$case_dir/log" \
+  MOCK_NSG_LIST='[{"name":"india-nsg","tags":{"app":"devpod","owner":"guru","region_profile":"india"}}]' \
+  MOCK_NSG_SHOW='{"securityRules":[{"name":"devpod_inbound_22","direction":"Inbound","access":"Allow","protocol":"Tcp","sourceAddressPrefix":"198.51.100.24/32","destinationPortRange":"22"},{"name":"other-ssh","direction":"Inbound","access":"Allow","protocol":"Tcp","sourceAddressPrefix":"203.0.113.0/24","destinationPortRange":"22"}]}' \
+  DEVPOD_AZURE_PUBLIC_IP="198.51.100.24" \
+  DEVPOD_SSH_CONFIG="$case_dir/ssh-config" \
+  "$script" india vision-india --source . >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+  fail "additional inbound SSH rule was accepted"
+fi
+assert_contains "$case_dir/stderr" 'NSG verification failed'
+
 case_dir="$test_root/forward-agent"
 mkdir -p "$case_dir"
 : >"$case_dir/log"
@@ -190,5 +209,20 @@ if PATH="$fixture_bin:$PATH" \
   fail "workspace from the wrong provider was accepted"
 fi
 assert_contains "$case_dir/stderr" 'belongs to provider azure-sf, not azure-india'
+
+case_dir="$test_root/symlinked-config"
+mkdir -p "$case_dir"
+: >"$case_dir/log"
+touch "$case_dir/ssh-config-target"
+ln -s "$case_dir/ssh-config-target" "$case_dir/ssh-config"
+if PATH="$fixture_bin:$PATH" \
+  MOCK_LOG="$case_dir/log" \
+  DEVPOD_AZURE_PUBLIC_IP="198.51.100.24" \
+  DEVPOD_SSH_CONFIG="$case_dir/ssh-config" \
+  "$script" india vision-india --source . >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+  fail "symlinked SSH config was accepted"
+fi
+assert_contains "$case_dir/stderr" 'SSH config must not be a symlink'
+assert_not_contains "$case_dir/log" 'az '
 
 printf 'PASS: devpod-azure-connect tests\n'

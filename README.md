@@ -1,6 +1,6 @@
 # AZURE Provider for DevPod
 
-[![Join us on Slack!](docs/static/media/slack.svg)](https://slack.loft.sh/) [![Open in DevPod!](https://devpod.sh/assets/open-in-devpod.svg)](https://devpod.sh/open#https://github.com/loft-sh/devpod-provider-azure)
+[![Join us on Slack!](docs/static/media/slack.svg)](https://slack.loft.sh/) [![Open in DevPod!](https://devpod.sh/assets/open-in-devpod.svg)](https://devpod.sh/open#https://github.com/guru3s/devpod-provider-azure)
 
 ## Getting started with this pinned fork
 
@@ -9,11 +9,15 @@ still requests a retired Basic public IP. Install this release under separate
 profile names and provide a validated current public IPv4 `/32` during setup.
 
 ```sh
+AZURE_SUBSCRIPTION_ID="$(az account show --query id --output tsv)"
+printf 'Current public IPv4: ' >&2
+IFS= read -r PUBLIC_IPV4
+
 devpod provider add guru3s/devpod-provider-azure@v0.11.1-guru.1 \
   --name azure-india \
   --single-machine \
   --use \
-  --option AZURE_SUBSCRIPTION_ID=<subscription-id> \
+  --option "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}" \
   --option AZURE_RESOURCE_GROUP=agentagon-devpod-india \
   --option AZURE_REGION=southindia \
   --option AZURE_DISK_SIZE=128 \
@@ -21,14 +25,14 @@ devpod provider add guru3s/devpod-provider-azure@v0.11.1-guru.1 \
   --option AZURE_IMAGE=Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest \
   --option AZURE_INSTANCE_SIZE=Standard_D4as_v5 \
   --option AZURE_TAGS=app=devpod,owner=guru,region_profile=india \
-  --option AZURE_SSH_SOURCE_CIDR=<public-ipv4>/32 \
+  --option "AZURE_SSH_SOURCE_CIDR=${PUBLIC_IPV4}/32" \
   --option INACTIVITY_TIMEOUT=30m
 
 devpod provider add guru3s/devpod-provider-azure@v0.11.1-guru.1 \
   --name azure-sf \
   --single-machine \
   --use=false \
-  --option AZURE_SUBSCRIPTION_ID=<subscription-id> \
+  --option "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}" \
   --option AZURE_RESOURCE_GROUP=agentagon-devpod-sf \
   --option AZURE_REGION=westus \
   --option AZURE_DISK_SIZE=128 \
@@ -36,7 +40,7 @@ devpod provider add guru3s/devpod-provider-azure@v0.11.1-guru.1 \
   --option AZURE_IMAGE=Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest \
   --option AZURE_INSTANCE_SIZE=Standard_D4as_v5 \
   --option AZURE_TAGS=app=devpod,owner=guru,region_profile=sf \
-  --option AZURE_SSH_SOURCE_CIDR=<public-ipv4>/32 \
+  --option "AZURE_SSH_SOURCE_CIDR=${PUBLIC_IPV4}/32" \
   --option INACTIVITY_TIMEOUT=30m
 ```
 
@@ -44,17 +48,19 @@ Required provider variables are:
 
 - AZURE_RESOURCE_GROUP
 - AZURE_REGION
+- AZURE_SUBSCRIPTION_ID
 - AZURE_SSH_SOURCE_CIDR
 
-### Creating your first devpod env with azure
+### Creating your first workspace safely
 
-After the initial setup, just use:
+Install the helper below, then use it for every creation and reconnect so a
+network change refreshes the SSH allowlist:
 
 ```sh
-devpod up .
+devpod-azure-connect india project-india --ide cursor --source .
 ```
 
-You'll need to wait for the machine and environment setup.
+Omit `--source` on later connections to the same workspace.
 
 Be aware that authentication is obtained using Azure's Default Credential authenticator, this uses
 the CLI tool, the ENV or Certificates, take a look
@@ -64,13 +70,13 @@ for more info on how to setup either one of those auth methods.
 
 ### Customize the VM Instance
 
-This provides has the seguent options
+This provider has the following options:
 
 |    NAME           | REQUIRED |          DESCRIPTION                  |         DEFAULT         |
 |-------------------|----------|---------------------------------------|-------------------------|
 | AZURE_DISK_SIZE           | false    | The disk size to use.          | 40                                      |
 | AZURE_IMAGE               | false    | The disk image to use.         | Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest |
-| AZURE_INSTANCE_SIZE       | false    | The machine type to use.       | Standard_D11_v2                         |
+| AZURE_INSTANCE_SIZE       | false    | The machine type to use.       | Standard_D4s_v3                         |
 | AZURE_REGION              | true     | The azure region to use        |                                         |
 | AZURE_RESOURCE_GROUP      | true     | The azure resource group name  |                                         |
 | AZURE_SUBSCRIPTION_ID     | true     | The azure subscription id      |                                         |

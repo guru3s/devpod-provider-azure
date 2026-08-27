@@ -83,6 +83,7 @@ verify_nsg() {
     def ports:
       [(.destinationPortRange? // empty), (.destinationPortRanges[]? // empty)];
 
+    ([.securityRules[]? | select(inbound_allow)] | length) == 1 and
     ([.securityRules[]? | select(inbound_allow) | sources[] | select(worldwide)] | length) == 0 and
     ([.securityRules[]? | select(.name == "devpod_inbound_22")] | length) == 1 and
     ([.securityRules[]? | select(.name == "devpod_inbound_22")][0] |
@@ -224,6 +225,7 @@ require_command jq
 require_command ssh
 
 ssh_config_path="${DEVPOD_SSH_CONFIG:-${HOME}/.ssh/config}"
+[[ ! -L "$ssh_config_path" ]] || die "SSH config must not be a symlink: $ssh_config_path"
 
 provider_repo="guru3s/devpod-provider-azure"
 provider_version="v0.11.1-guru.1"
