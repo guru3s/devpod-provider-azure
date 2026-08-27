@@ -111,6 +111,7 @@ Use it with an explicit source the first time a workspace is created:
 
 ```sh
 devpod-azure-connect india project-india --ide cursor --source .
+devpod-azure-connect sf project-sf --ide vscode --source https://github.com/example/project
 devpod-azure-connect india project-india --ide vscode
 devpod-azure-connect india project-india --ide none
 ```
