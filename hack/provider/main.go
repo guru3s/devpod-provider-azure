@@ -6,8 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 )
+
+const defaultProviderRepository = "loft-sh/devpod-provider-azure"
+
+var providerRepositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
 var checksumMap = map[string]string{
 	"./release/devpod-provider-azure-linux-amd64":       "##CHECKSUM_LINUX_AMD64##",
@@ -24,12 +29,21 @@ func main() {
 		return
 	}
 
+	repo := os.Getenv("PROVIDER_REPO")
+	if repo == "" {
+		repo = defaultProviderRepository
+	}
+
 	content, err := os.ReadFile("./hack/provider/provider.yaml")
 	if err != nil {
 		panic(err)
 	}
 
-	replaced := strings.Replace(string(content), "##VERSION##", os.Args[1], -1)
+	replaced, err := renderProviderTemplate(string(content), os.Args[1], repo)
+	if err != nil {
+		panic(err)
+	}
+
 	for k, v := range checksumMap {
 		checksum, err := File(k)
 		if err != nil {
@@ -40,6 +54,20 @@ func main() {
 	}
 
 	fmt.Print(replaced)
+}
+
+func renderProviderTemplate(content, version, repo string) (string, error) {
+	if version == "" {
+		return "", fmt.Errorf("version must not be empty")
+	}
+
+	if !providerRepositoryPattern.MatchString(repo) {
+		return "", fmt.Errorf("invalid PROVIDER_REPO %q: expected GitHub owner/repository", repo)
+	}
+
+	replaced := strings.ReplaceAll(content, "##VERSION##", version)
+	replaced = strings.ReplaceAll(replaced, "##REPO##", repo)
+	return replaced, nil
 }
 
 // File hashes a given file to a sha256 string

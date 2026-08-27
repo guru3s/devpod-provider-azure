@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+if [[ "$1" == "-F" && "$3" == "-G" ]]; then
+  host_alias="$4"
+  printf 'host %s\n' "$host_alias"
+  printf 'forwardagent %s\n' "${MOCK_FORWARD_AGENT:-no}"
+  printf 'proxycommand /usr/local/bin/devpod ssh --stdio --context default --user devcontainer %s\n' "${host_alias%.devpod}"
+  exit 0
+fi
+
+exit 91
