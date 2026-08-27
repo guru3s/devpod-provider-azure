@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+
+printf 'az' >>"$MOCK_LOG"
+printf ' <%s>' "$@" >>"$MOCK_LOG"
+printf '\n' >>"$MOCK_LOG"
+
+case "$1 $2 $3" in
+  "account show --subscription")
+    printf '%s\n' '00000000-0000-0000-0000-000000000000'
+    ;;
+  "group show --subscription")
+    printf '%s\n' '{"tags":{"app":"devpod","owner":"guru","region_profile":"'"${MOCK_PROFILE:-india}"'"}}'
+    ;;
+  "network nsg list")
+    if [[ -n "${MOCK_NSG_LIST:-}" ]]; then
+      printf '%s\n' "$MOCK_NSG_LIST"
+    elif grep -F 'devpod <up>' "$MOCK_LOG" >/dev/null 2>&1; then
+      printf '%s\n' '[{"name":"india-nsg","tags":{"app":"devpod","owner":"guru","region_profile":"india"}}]'
+    else
+      printf '%s\n' '[]'
+    fi
+    ;;
+  "network nsg show")
+    if [[ -n "${MOCK_NSG_SHOW:-}" ]]; then
+      printf '%s\n' "$MOCK_NSG_SHOW"
+    else
+      printf '%s\n' '{"securityRules":[{"name":"devpod_inbound_22","direction":"Inbound","access":"Allow","protocol":"Tcp","sourceAddressPrefix":"198.51.100.24/32","destinationPortRange":"22"}]}'
+    fi
+    ;;
+  "network nsg rule")
+    exit 0
+    ;;
+  *)
+    printf 'unexpected az invocation: %s\n' "$*" >&2
+    exit 91
+    ;;
+esac

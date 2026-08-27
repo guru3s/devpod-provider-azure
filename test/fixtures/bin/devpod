@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+
+printf 'devpod' >>"$MOCK_LOG"
+printf ' <%s>' "$@" >>"$MOCK_LOG"
+printf '\n' >>"$MOCK_LOG"
+
+if [[ "$1 $2 $3" == "provider list --output" ]]; then
+  if [[ "${MOCK_STOCK_PROVIDER:-false}" == "true" ]]; then
+    printf '%s\n' '{"azure-india":{"config":{"name":"azure","version":"v0.11.0","source":{"github":"loft-sh/devpod-provider-azure"}},"state":{"initialized":true,"singleMachine":true,"options":{}}}}'
+    exit 0
+  fi
+  source_cidr_option='{}'
+  if [[ "${MOCK_IGNORE_SOURCE_CIDR:-false}" != "true" ]] && \
+    grep -F 'AZURE_SSH_SOURCE_CIDR=198.51.100.24/32' "$MOCK_LOG" >/dev/null 2>&1; then
+    source_cidr_option='{"value":"198.51.100.24/32"}'
+  fi
+  printf '%s\n' '{
+    "azure-india": {
+      "config": {
+        "name": "azure",
+        "version": "v0.11.1-guru.1",
+        "source": {"github": "guru3s/devpod-provider-azure"},
+        "options": {"AZURE_SSH_SOURCE_CIDR": {"required": true}},
+        "binaries": {"AZURE_PROVIDER": [
+          {"path":"https://github.com/guru3s/devpod-provider-azure/releases/download/v0.11.1-guru.1/a"},
+          {"path":"https://github.com/guru3s/devpod-provider-azure/releases/download/v0.11.1-guru.1/b"},
+          {"path":"https://github.com/guru3s/devpod-provider-azure/releases/download/v0.11.1-guru.1/c"},
+          {"path":"https://github.com/guru3s/devpod-provider-azure/releases/download/v0.11.1-guru.1/d"},
+          {"path":"https://github.com/guru3s/devpod-provider-azure/releases/download/v0.11.1-guru.1/e"}
+        ]},
+        "agent": {"binaries": {"AZURE_PROVIDER": [
+          {"path":"https://github.com/guru3s/devpod-provider-azure/releases/download/v0.11.1-guru.1/a"},
+          {"path":"https://github.com/guru3s/devpod-provider-azure/releases/download/v0.11.1-guru.1/b"}
+        ]}}
+      },
+      "state": {
+        "initialized": true,
+        "singleMachine": true,
+        "options": {
+          "AZURE_SUBSCRIPTION_ID": {"value":"00000000-0000-0000-0000-000000000000"},
+          "AZURE_RESOURCE_GROUP": {"value":"agentagon-devpod-india"},
+          "AZURE_REGION": {"value":"southindia"},
+          "AZURE_DISK_SIZE": {"value":"128"},
+          "AZURE_DISK_TYPE": {"value":"StandardSSD_LRS"},
+          "AZURE_IMAGE": {"value":"Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest"},
+          "AZURE_INSTANCE_SIZE": {"value":"Standard_D4as_v5"},
+          "AZURE_TAGS": {"value":"app=devpod,owner=guru,region_profile=india"},
+          "AZURE_SSH_SOURCE_CIDR": '"$source_cidr_option"',
+          "INACTIVITY_TIMEOUT": {"value":"30m"}
+        }
+      }
+    }
+  }'
+  exit 0
+fi
+
+if [[ "$1 $2" == "list --output" ]]; then
+  printf '%s\n' "${MOCK_WORKSPACES:-[]}"
+fi

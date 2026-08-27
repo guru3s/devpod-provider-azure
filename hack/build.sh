@@ -35,8 +35,9 @@ sha256_file() {
   shasum -a 256 "${file_path}" | cut -d ' ' -f 1
 }
 
-# Create the release directory
+# Recreate the exact release file set so stale assets cannot be published.
 mkdir -p "${provider_root}/release"
+find "${provider_root}/release" -mindepth 1 -maxdepth 1 -type f -delete
 
 for target_os in "${build_platforms[@]}"; do
   for target_arch in "${build_arches[@]}"; do

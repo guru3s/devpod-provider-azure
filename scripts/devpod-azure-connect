@@ -1,0 +1,390 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: devpod-azure-connect <india|sf> <workspace> [--ide cursor|vscode|none] [--source <path-or-url>]
+
+Examples:
+  devpod-azure-connect india vision-india --ide cursor --source .
+  devpod-azure-connect sf vision-sf --ide vscode --source git:https://github.com/example/project
+  devpod-azure-connect india vision-india --ide none
+
+The --source option is required only when creating a workspace for the first time.
+Set DEVPOD_AZURE_PUBLIC_IP to a known IPv4 address to bypass public-IP discovery.
+EOF
+}
+
+die() {
+  printf 'devpod-azure-connect: %s\n' "$*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+valid_ipv4() {
+  printf '%s\n' "$1" | awk -F. '
+    NF != 4 { exit 1 }
+    {
+      for (i = 1; i <= 4; i++) {
+        if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255) exit 1
+        if (length($i) > 1 && substr($i, 1, 1) == "0") exit 1
+      }
+    }
+  '
+}
+
+discover_public_ipv4() {
+  local candidate endpoint
+
+  if [[ -n "${DEVPOD_AZURE_PUBLIC_IP:-}" ]]; then
+    candidate="${DEVPOD_AZURE_PUBLIC_IP}"
+    valid_ipv4 "$candidate" || return 1
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  for endpoint in "https://api.ipify.org" "https://checkip.amazonaws.com"; do
+    candidate="$(curl --fail --silent --show-error --max-time 10 "$endpoint" 2>/dev/null | tr -d '\r\n')" || true
+    if valid_ipv4 "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+verify_nsg() {
+  local resource_group="$1"
+  local nsg_name="$2"
+  local source_cidr="$3"
+  local subscription_id="$4"
+  local nsg_json
+
+  nsg_json="$(az network nsg show \
+    --subscription "$subscription_id" \
+    --resource-group "$resource_group" \
+    --name "$nsg_name" \
+    --output json)" || return 1
+
+  printf '%s\n' "$nsg_json" | jq -e --arg cidr "$source_cidr" '
+    def inbound_allow:
+      ((.direction // "") | ascii_downcase) == "inbound" and
+      ((.access // "") | ascii_downcase) == "allow";
+    def worldwide:
+      . == "0.0.0.0/0" or . == "*" or
+      (type == "string" and ascii_downcase == "internet");
+    def sources:
+      [(.sourceAddressPrefix? // empty), (.sourceAddressPrefixes[]? // empty)];
+    def ports:
+      [(.destinationPortRange? // empty), (.destinationPortRanges[]? // empty)];
+
+    ([.securityRules[]? | select(inbound_allow) | sources[] | select(worldwide)] | length) == 0 and
+    ([.securityRules[]? | select(.name == "devpod_inbound_22")] | length) == 1 and
+    ([.securityRules[]? | select(.name == "devpod_inbound_22")][0] |
+      inbound_allow and
+      (((.protocol // "") | ascii_downcase) == "tcp") and
+      (sources == [$cidr]) and
+      (ports == ["22"]))
+  ' >/dev/null
+}
+
+disable_agent_forwarding() {
+  local workspace_id="$1"
+  local ssh_config="$2"
+  local host_alias="${workspace_id}.devpod"
+  local start_marker="# DevPod Start ${host_alias}"
+  local end_marker="# DevPod End ${host_alias}"
+  local temporary_config
+
+  [[ -f "$ssh_config" ]] || return 1
+  [[ ! -L "$ssh_config" ]] || return 1
+  temporary_config="$(mktemp "${ssh_config}.devpod-connect.XXXXXX")" || return 1
+
+  if ! awk -v start_marker="$start_marker" -v end_marker="$end_marker" '
+    $0 == start_marker {
+      in_target = 1
+      start_count++
+      print
+      next
+    }
+    $0 == end_marker {
+      in_target = 0
+      end_count++
+      print
+      next
+    }
+    in_target && $1 == "ForwardAgent" {
+      print "  ForwardAgent no"
+      forward_agent_count++
+      next
+    }
+    { print }
+    END {
+      if (start_count != 1 || end_count != 1 || forward_agent_count != 1 || in_target) exit 42
+    }
+  ' "$ssh_config" >"$temporary_config"; then
+    rm -f "$temporary_config"
+    return 1
+  fi
+
+  chmod 600 "$temporary_config" || {
+    rm -f "$temporary_config"
+    return 1
+  }
+  mv "$temporary_config" "$ssh_config" || {
+    rm -f "$temporary_config"
+    return 1
+  }
+}
+
+verify_ssh_alias() {
+  local workspace_id="$1"
+  local ssh_config="$2"
+  local host_alias="${workspace_id}.devpod"
+  local resolved_config forward_agent proxy_command
+
+  resolved_config="$(ssh -F "$ssh_config" -G "$host_alias" 2>/dev/null)" || return 1
+  forward_agent="$(printf '%s\n' "$resolved_config" | awk '$1 == "forwardagent" { print $2; exit }')"
+  proxy_command="$(printf '%s\n' "$resolved_config" | awk '$1 == "proxycommand" { sub(/^[^ ]+[ ]+/, ""); print; exit }')"
+
+  [[ "$forward_agent" == "no" ]] || return 1
+  [[ "$proxy_command" == *" ssh --stdio "* ]] || return 1
+  [[ "$proxy_command" == *" ${workspace_id}" ]] || return 1
+}
+
+if [[ $# -lt 2 ]]; then
+  usage >&2
+  exit 2
+fi
+
+profile_input="$1"
+workspace="$2"
+shift 2
+
+ide="none"
+workspace_source=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --ide)
+      [[ $# -ge 2 ]] || die "--ide requires a value"
+      ide="$2"
+      shift 2
+      ;;
+    --source)
+      [[ $# -ge 2 ]] || die "--source requires a value"
+      workspace_source="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown argument: $1"
+      ;;
+  esac
+done
+
+case "$profile_input" in
+  india|azure-india)
+    provider="azure-india"
+    resource_group="agentagon-devpod-india"
+    region_profile="india"
+    azure_region="southindia"
+    ;;
+  sf|azure-sf)
+    provider="azure-sf"
+    resource_group="agentagon-devpod-sf"
+    region_profile="sf"
+    azure_region="westus"
+    ;;
+  *)
+    die "profile must be india or sf"
+    ;;
+esac
+
+case "$ide" in
+  cursor|vscode|none) ;;
+  *) die "--ide must be cursor, vscode, or none" ;;
+esac
+
+[[ "$workspace" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "workspace id must contain only lowercase letters, numbers, and dashes"
+[[ ${#workspace} -le 48 ]] || die "workspace id cannot exceed 48 characters"
+
+require_command az
+require_command curl
+require_command devpod
+require_command jq
+require_command ssh
+
+ssh_config_path="${DEVPOD_SSH_CONFIG:-${HOME}/.ssh/config}"
+
+provider_repo="guru3s/devpod-provider-azure"
+provider_version="v0.11.1-guru.1"
+expected_image="Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest"
+expected_tags="app=devpod,owner=guru,region_profile=${region_profile}"
+release_prefix="https://github.com/${provider_repo}/releases/download/${provider_version}/"
+
+provider_list_json="$(devpod provider list --output json)" || die "failed to inspect DevPod providers"
+printf '%s\n' "$provider_list_json" | jq -e \
+  --arg provider "$provider" \
+  --arg repo "$provider_repo" \
+  --arg version "$provider_version" \
+  --arg release_prefix "$release_prefix" \
+  --arg resource_group "$resource_group" \
+  --arg region "$azure_region" \
+  --arg image "$expected_image" \
+  --arg tags "$expected_tags" '
+    .[$provider] as $p |
+    $p.config.name == "azure" and
+    $p.config.source.github == $repo and
+    $p.config.version == $version and
+    $p.config.options.AZURE_SSH_SOURCE_CIDR.required == true and
+    ($p.config.binaries.AZURE_PROVIDER | length) == 5 and
+    ($p.config.agent.binaries.AZURE_PROVIDER | length) == 2 and
+    ([$p.config.binaries.AZURE_PROVIDER[], $p.config.agent.binaries.AZURE_PROVIDER[]] |
+      all(.path | startswith($release_prefix))) and
+    $p.state.initialized == true and
+    $p.state.singleMachine == true and
+    $p.state.options.AZURE_RESOURCE_GROUP.value == $resource_group and
+    $p.state.options.AZURE_REGION.value == $region and
+    $p.state.options.AZURE_DISK_SIZE.value == "128" and
+    $p.state.options.AZURE_DISK_TYPE.value == "StandardSSD_LRS" and
+    $p.state.options.AZURE_IMAGE.value == $image and
+    ($p.state.options.AZURE_INSTANCE_SIZE.value |
+      . == "Standard_D4as_v5" or . == "Standard_D4s_v5" or . == "Standard_D4s_v3") and
+    $p.state.options.AZURE_TAGS.value == $tags and
+    $p.state.options.INACTIVITY_TIMEOUT.value == "30m"
+  ' >/dev/null || die "provider $provider is not the pinned, expected Azure profile"
+
+subscription_id="$(printf '%s\n' "$provider_list_json" | jq -er \
+  --arg provider "$provider" \
+  '.[$provider].state.options.AZURE_SUBSCRIPTION_ID.value | select(type == "string" and length > 0)')" || \
+  die "provider $provider has no Azure subscription"
+
+active_subscription_id="$(az account show \
+  --subscription "$subscription_id" \
+  --query id \
+  --output tsv)" || die "Azure CLI is not authenticated for the provider subscription"
+[[ "$active_subscription_id" == "$subscription_id" ]] || die "Azure CLI returned the wrong subscription"
+
+group_json="$(az group show --subscription "$subscription_id" --name "$resource_group" --output json)" || \
+  die "cannot read expected Azure resource group: $resource_group"
+printf '%s\n' "$group_json" | jq -e \
+  --arg profile "$region_profile" \
+  '.tags.app == "devpod" and .tags.owner == "guru" and .tags.region_profile == $profile' \
+  >/dev/null || die "resource-group tags do not match the selected profile"
+
+public_ip="$(discover_public_ipv4)" || die "could not discover and validate the current public IPv4 address"
+source_cidr="${public_ip}/32"
+
+printf 'Restricting %s SSH to %s\n' "$provider" "$source_cidr"
+devpod provider set-options "$provider" --option "AZURE_SSH_SOURCE_CIDR=${source_cidr}"
+
+provider_list_json="$(devpod provider list --output json)" || \
+  die "failed to verify the updated provider option"
+saved_source_cidr="$(printf '%s\n' "$provider_list_json" | jq -er \
+  --arg provider "$provider" \
+  '.[$provider].state.options.AZURE_SSH_SOURCE_CIDR.value | select(type == "string" and length > 0)')" || \
+  die "provider did not persist AZURE_SSH_SOURCE_CIDR"
+[[ "$saved_source_cidr" == "$source_cidr" ]] || \
+  die "provider saved an unexpected SSH source CIDR; refusing Azure changes"
+
+nsg_list_json="$(az network nsg list --subscription "$subscription_id" --resource-group "$resource_group" --output json)" || \
+  die "failed to list network security groups in $resource_group"
+nsg_names="$(printf '%s\n' "$nsg_list_json" | jq -r \
+  --arg profile "$region_profile" \
+  '.[] | select(.tags.app == "devpod" and .tags.owner == "guru" and .tags.region_profile == $profile) | .name')"
+nsg_count="$(printf '%s\n' "$nsg_names" | awk 'NF { count++ } END { print count + 0 }')"
+
+case "$nsg_count" in
+  0)
+    printf 'No tagged NSG exists yet; the provider will create one with %s.\n' "$source_cidr"
+    ;;
+  1)
+    nsg_name="$nsg_names"
+    az network nsg rule update \
+      --subscription "$subscription_id" \
+      --resource-group "$resource_group" \
+      --nsg-name "$nsg_name" \
+      --name devpod_inbound_22 \
+      --source-address-prefixes "$source_cidr" \
+      --output none || die "failed to update the SSH NSG rule"
+    verify_nsg "$resource_group" "$nsg_name" "$source_cidr" "$subscription_id" || \
+      die "NSG verification failed; refusing to connect"
+    ;;
+  *)
+    die "found $nsg_count tagged NSGs in $resource_group; refusing to guess which one to update"
+    ;;
+esac
+
+confirmed_ip="$(discover_public_ipv4)" || die "could not revalidate the current public IPv4 address"
+[[ "$confirmed_ip" == "$public_ip" ]] || \
+  die "public IPv4 changed during setup; rerun the command to update the allowlist"
+
+workspace_list_json="$(devpod list --output json)" || die "failed to list DevPod workspaces"
+printf '%s\n' "$workspace_list_json" | jq -e 'type == "array"' >/dev/null || \
+  die "DevPod returned an invalid workspace list"
+
+workspace_exists="false"
+workspace_match_count="$(printf '%s\n' "$workspace_list_json" | jq -r --arg id "$workspace" \
+  '[.[] | select(.id == $id)] | length')"
+[[ "$workspace_match_count" == "0" || "$workspace_match_count" == "1" ]] || \
+  die "DevPod returned duplicate workspace ids for $workspace"
+if [[ "$workspace_match_count" == "1" ]]; then
+  workspace_provider="$(printf '%s\n' "$workspace_list_json" | jq -r --arg id "$workspace" \
+    '.[] | select(.id == $id) | .provider.name')"
+  [[ "$workspace_provider" == "$provider" ]] || \
+    die "workspace $workspace belongs to provider $workspace_provider, not $provider"
+  workspace_exists="true"
+fi
+
+devpod_args=(up)
+if [[ "$workspace_exists" == "true" ]]; then
+  [[ -z "$workspace_source" ]] || printf 'Workspace already exists; ignoring --source.\n' >&2
+  devpod_args+=("$workspace")
+else
+  [[ -n "$workspace_source" ]] || \
+    die "workspace $workspace does not exist; provide --source <path-or-url>"
+  devpod_args+=("$workspace_source" --id "$workspace")
+fi
+devpod_args+=(--provider "$provider" --ide "$ide" --configure-ssh --ssh-config "$ssh_config_path" --open-ide=false)
+
+devpod "${devpod_args[@]}"
+
+post_nsg_json="$(az network nsg list --subscription "$subscription_id" --resource-group "$resource_group" --output json)" || \
+  die "workspace started, but post-connect NSG lookup failed"
+post_nsg_names="$(printf '%s\n' "$post_nsg_json" | jq -r \
+  --arg profile "$region_profile" \
+  '.[] | select(.tags.app == "devpod" and .tags.owner == "guru" and .tags.region_profile == $profile) | .name')"
+post_nsg_count="$(printf '%s\n' "$post_nsg_names" | awk 'NF { count++ } END { print count + 0 }')"
+[[ "$post_nsg_count" == "1" ]] || \
+  die "workspace started, but expected one tagged NSG and found $post_nsg_count"
+verify_nsg "$resource_group" "$post_nsg_names" "$source_cidr" "$subscription_id" || \
+  die "workspace started, but final NSG verification failed"
+
+disable_agent_forwarding "$workspace" "$ssh_config_path" || \
+  die "workspace started, but its exact DevPod SSH block could not be secured"
+verify_ssh_alias "$workspace" "$ssh_config_path" || \
+  die "workspace started, but its SSH alias is missing the DevPod proxy or still forwards the SSH agent"
+
+confirmed_ip="$(discover_public_ipv4)" || die "could not revalidate the public IPv4 before opening the IDE"
+[[ "$confirmed_ip" == "$public_ip" ]] || \
+  die "public IPv4 changed while starting the workspace; rerun the command before connecting"
+
+if [[ "$ide" != "none" ]]; then
+  devpod up "$workspace" \
+    --provider "$provider" \
+    --ide "$ide" \
+    --configure-ssh=false \
+    --ssh-config "$ssh_config_path" \
+    --open-ide=true
+fi
+
+printf 'Connected to %s with SSH restricted to %s.\n' "$workspace" "$source_cidr"

@@ -9,26 +9,29 @@ permissions:
   contents: read
 
 jobs:
-  publish-provider:
+  build-provider:
     if: github.repository == 'guru3s/devpod-provider-azure'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     env:
       PROVIDER_REPO: guru3s/devpod-provider-azure
       RELEASE_VERSION: ${{ github.ref_name }}
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
+          go-version: 1.23.12
           cache: true
 
       - name: Test
-        run: go test -mod=vendor ./...
+        run: |
+          go test -mod=vendor ./...
+          ./test/devpod-azure-connect-test.sh
 
       - name: Vet
         run: go vet -mod=vendor ./...
@@ -37,13 +40,42 @@ jobs:
         run: ./hack/build.sh
 
       - name: Verify fork manifest
+        run: ./hack/verify-release.sh
+
+      - name: Stage verified release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: devpod-provider-assets-${{ github.sha }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-provider:
+    if: github.repository == 'guru3s/devpod-provider-azure'
+    needs: build-provider
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      PROVIDER_REPO: guru3s/devpod-provider-azure
+      RELEASE_VERSION: ${{ github.ref_name }}
+    steps:
+      - name: Download verified release assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: devpod-provider-assets-${{ github.sha }}
+          path: release/
+
+      - name: Recheck release assets
         run: |
+          test "$(find release -maxdepth 1 -type f | wc -l)" -eq 11
           test "$(grep -c 'github.com/guru3s/devpod-provider-azure/releases/download/' release/provider.yaml)" -eq 7
           ! grep -q 'github.com/loft-sh/devpod-provider-azure/releases/download/' release/provider.yaml
           ! grep -q '##[A-Z_]*##' release/provider.yaml
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: release/*
           fail_on_unmatched_files: true
