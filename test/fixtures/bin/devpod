@@ -17,7 +17,7 @@ if [[ "$1 $2 $3" == "provider list --output" ]]; then
   printf '%s\n' '{
     "azure-india": {
       "config": {
-        "name": "azure",
+        "name": "azure-india",
         "version": "v0.11.1-guru.1",
         "source": {"github": "guru3s/devpod-provider-azure"},
         "options": {"AZURE_SSH_SOURCE_CIDR": {"required": true}},

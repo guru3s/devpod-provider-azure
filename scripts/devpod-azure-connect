@@ -244,7 +244,7 @@ printf '%s\n' "$provider_list_json" | jq -e \
   --arg image "$expected_image" \
   --arg tags "$expected_tags" '
     .[$provider] as $p |
-    $p.config.name == "azure" and
+    $p.config.name == $provider and
     $p.config.source.github == $repo and
     $p.config.version == $version and
     $p.config.options.AZURE_SSH_SOURCE_CIDR.required == true and
