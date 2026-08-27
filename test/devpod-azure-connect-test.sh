@@ -54,7 +54,7 @@ run_success_case() {
 
 run_success_case create "$script" india vision-india --ide cursor --source .
 case_dir="$success_case_dir"
-assert_contains "$case_dir/log" 'devpod <provider> <set-options> <azure-india> <--option> <AZURE_SSH_SOURCE_CIDR=198.51.100.24/32>'
+assert_contains "$case_dir/log" 'devpod <provider> <set-options> <azure-india> <--single-machine> <--option> <AZURE_SSH_SOURCE_CIDR=198.51.100.24/32>'
 assert_contains "$case_dir/log" "devpod <up> <.> <--id> <vision-india> <--provider> <azure-india> <--ide> <cursor> <--configure-ssh> <--ssh-config> <$case_dir/ssh-config> <--open-ide=false>"
 assert_contains "$case_dir/log" "devpod <up> <vision-india> <--provider> <azure-india> <--ide> <cursor> <--configure-ssh=false> <--ssh-config> <$case_dir/ssh-config> <--open-ide=true>"
 assert_contains "$case_dir/ssh-config" '  ForwardAgent no'
